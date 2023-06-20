@@ -22,6 +22,22 @@
       "factor": 1
     }
   ],
+  "ocpp": {
+    "useocpp": false,
+    "ocpphost": "",
+    "ocppport": 1883,
+    "ocppurl": "",
+    "ocppboxid": "",
+    "ocppauthkey": ""
+  },
+  "mqtt": {
+    "usemqtt": false,
+    "mqttserver": "",
+    "mqttport": 1883,
+    "mqttuser": "",
+    "mqttpass": "",
+    "mqtttopic": ""
+  },
   "rfid": {
     "userfid": true,
     "rfidgain": 32

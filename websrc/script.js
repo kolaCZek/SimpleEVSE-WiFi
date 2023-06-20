@@ -554,6 +554,8 @@ function loadSettings() {
   closeNav();
 
   websock.send("{\"command\":\"getconf\"}");
+  handleOCPP();
+  handleMQTT();
   handleRFID();
   handleMeter();
   handleMeterType();
@@ -569,10 +571,10 @@ function listCONF(obj) {
     document.getElementById("divUseRSE").style.display = "none";
     document.getElementById("divCPInterrupt").style.display = "none";
     document.getElementById("divDisplayRotation").style.display = "none";
-    document.getElementById("textDownloadFwVersion").innerHTML = "Download <a href=\"https://github.com/CurtRod/SimpleEVSE-WiFi/releases\" target=\"_blank\">latest version</a> from GitHub.";
+    document.getElementById("textDownloadFwVersion").innerHTML = "Download <a href=\"https://github.com/kolaCZek/SimpleEVSE-WiFi/releases\" target=\"_blank\">latest version</a> from GitHub.";
   }
   else {
-    document.getElementById("textDownloadFwVersion").innerHTML = "Download <a href=\"https://www.evse-wifi.de/download/\" target=\"_blank\">latest version</a>.";
+    document.getElementById("textDownloadFwVersion").innerHTML = "Download <a href=\"https://github.com/kolaCZek/SimpleEVSE-WiFi/releases\" target=\"_blank\">latest version</a>.";
   }
 
   //Load WiFi settings
@@ -607,6 +609,24 @@ function listCONF(obj) {
   document.getElementById("price").value = obj.meter[0].price;
   handleMeterType();
   handleMeter();
+
+  //Load OCPP settings
+  document.getElementById("checkboxOcpp").checked = obj.ocpp.useocpp;
+  document.getElementById("ocpphost").value = obj.ocpp.ocpphost;
+  document.getElementById("ocppport").value = obj.ocpp.ocppport;
+  document.getElementById("ocppurl").value = obj.ocpp.ocppurl;
+  document.getElementById("ocppboxid").value = obj.ocpp.ocppboxid;
+  document.getElementById("ocppauthkey").value = obj.ocpp.ocppauthkey;
+  handleOCPP();
+
+  //Load MQTT settings
+  document.getElementById("checkboxMqtt").checked = obj.mqtt.usemqtt;
+  document.getElementById("mqttserver").value = obj.mqtt.mqttserver;
+  document.getElementById("mqttport").value = obj.mqtt.mqttport;
+  document.getElementById("mqttuser").value = obj.mqtt.mqttuser;
+  document.getElementById("mqttpass").value = obj.mqtt.mqttpass;
+  document.getElementById("mqtttopic").value = obj.mqtt.mqtttopic;
+  handleMQTT();
 
   //Load RFID settings
   document.getElementById("gain").value = obj.rfid.rfidgain;
@@ -761,6 +781,40 @@ function handleStaticIP() {
     document.getElementById("divSubnet").style.display = "none";
     document.getElementById("divGateway").style.display = "none";
     document.getElementById("divDNS").style.display = "none";
+  }
+}
+
+function handleOCPP() {
+  if (document.getElementById("checkboxOcpp").checked === true) {
+    document.getElementById("ocpphost").disabled = false;
+    document.getElementById("ocppport").disabled = false;
+    document.getElementById("ocppurl").disabled = false;
+    document.getElementById("ocppboxid").disabled = false;
+    document.getElementById("ocppauthkey").disabled = false;
+  }
+  else {
+    document.getElementById("ocpphost").disabled = true;
+    document.getElementById("ocppport").disabled = true;
+    document.getElementById("ocppurl").disabled = true;
+    document.getElementById("ocppboxid").disabled = true;
+    document.getElementById("ocppauthkey").disabled = true;
+  }
+}
+
+function handleMQTT() {
+  if (document.getElementById("checkboxMqtt").checked === true) {
+    document.getElementById("mqttserver").disabled = false;
+    document.getElementById("mqttport").disabled = false;
+    document.getElementById("mqttuser").disabled = false;
+    document.getElementById("mqttpass").disabled = false;
+    document.getElementById("mqtttopic").disabled = false;
+  }
+  else {
+    document.getElementById("mqttserver").disabled = true;
+    document.getElementById("mqttport").disabled = true;
+    document.getElementById("mqttuser").disabled = true;
+    document.getElementById("mqttpass").disabled = true;
+    document.getElementById("mqtttopic").disabled = true;
   }
 }
 
@@ -950,6 +1004,8 @@ function saveConf() {
   datatosend.wifi = {};
   datatosend.meter = [];
   datatosend.meter[0] = {};
+  datatosend.ocpp = {};
+  datatosend.mqtt = {};
   datatosend.rfid = {};
   datatosend.ntp = {};
   datatosend.button = [];
@@ -999,6 +1055,20 @@ function saveConf() {
   datatosend.meter[0].implen = parseInt(document.getElementById("implen").value);
   datatosend.meter[0].meterphase = parseInt(document.getElementById("meterphase").value);
   datatosend.meter[0].factor = parseInt(document.getElementById("factor").value);
+
+  datatosend.ocpp.useocpp = document.getElementById("checkboxOcpp").checked;
+  datatosend.ocpp.ocpphost = document.getElementById("ocpphost").value;
+  datatosend.ocpp.ocppport = document.getElementById("ocppport").value;
+  datatosend.ocpp.ocppurl = document.getElementById("ocppurl").value;
+  datatosend.ocpp.ocppboxid = document.getElementById("ocppboxid").value;
+  datatosend.ocpp.ocppauthkey = document.getElementById("ocppauthkey").value;
+
+  datatosend.mqtt.usemqtt = document.getElementById("checkboxMqtt").checked;
+  datatosend.mqtt.mqttserver = document.getElementById("mqttserver").value;
+  datatosend.mqtt.mqttport = document.getElementById("mqttport").value;
+  datatosend.mqtt.mqttuser = document.getElementById("mqttuser").value;
+  datatosend.mqtt.mqttpass = document.getElementById("mqttpass").value;
+  datatosend.mqtt.mqtttopic = document.getElementById("mqtttopic").value;
 
   datatosend.rfid.userfid = document.getElementById("checkboxRfid").checked;
   //datatosend.rfid.sspin = parseInt(document.getElementById("gpioss").value);
@@ -1219,6 +1289,8 @@ function loadStatus() {
   refreshSeconds = 10;
 
   websock.send("{\"command\":\"getconf\"}");
+  handleOCPP();
+  handleMQTT();
   handleRFID();
   handleMeter();
   handleMeterType();

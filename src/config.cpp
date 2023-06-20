@@ -77,6 +77,24 @@ bool ICACHE_FLASH_ATTR EvseWiFiConfig::loadConfig(String givenConfig) {
     meterConfig[0].factor = jsonDoc["meter"][0]["factor"];
     Serial.println("METER loaded");
 
+    // ocppConfig
+    ocppConfig.useocpp = jsonDoc["ocpp"]["useocpp"];
+    ocppConfig.ocpphost = strdup(jsonDoc["ocpp"]["ocpphost"]);
+    ocppConfig.ocppport = jsonDoc["ocpp"]["ocppport"];
+    ocppConfig.ocppurl = strdup(jsonDoc["ocpp"]["ocppurl"]);
+    ocppConfig.ocppboxid = strdup(jsonDoc["ocpp"]["ocppboxid"]);
+    ocppConfig.ocppauthkey = strdup(jsonDoc["ocpp"]["ocppauthkey"]);
+    Serial.println("OCPP loaded");
+
+    // mqttConfig
+    mqttConfig.usemqtt = jsonDoc["mqtt"]["usemqtt"];
+    mqttConfig.mqttserver = strdup(jsonDoc["mqtt"]["mqttserver"]);
+    mqttConfig.mqttport = jsonDoc["mqtt"]["mqttport"];
+    mqttConfig.mqttuser = strdup(jsonDoc["mqtt"]["mqttuser"]);
+    mqttConfig.mqttpass = strdup(jsonDoc["mqtt"]["mqttpass"]);
+    mqttConfig.mqtttopic = strdup(jsonDoc["mqtt"]["mqtttopic"]);
+    Serial.println("MQTT loaded");
+
     // rfidConfig
     rfidConfig.userfid = jsonDoc["rfid"]["userfid"];
     rfidConfig.sspin = jsonDoc["rfid"]["sspin"];
@@ -241,6 +259,22 @@ bool ICACHE_FLASH_ATTR EvseWiFiConfig::printConfig() {
     Serial.println("meterphase: " + String(getMeterPhaseCount(0)));
     Serial.println("factor: " + String(getMeterFactor(0)));
     Serial.println();
+    Serial.println("// OCPP Config");
+    Serial.println("usemocpp: " + String(getOcppActive()));
+    Serial.println("ocpphost: " + String(getOcppHost()));
+    Serial.println("ocppport: " + String(getOcppPort()));
+    Serial.println("ocppurl: " + String(getOcppUrl()));
+    Serial.println("ocppboxid: " + String(getOcppBoxId()));
+    Serial.println("ocppauthkey: " + String(getOcppAuthKey()));
+    Serial.println();
+    Serial.println("// MQTT Config");
+    Serial.println("usemqtt: " + String(getMqttActive()));
+    Serial.println("mqttserver: " + String(getMqttServer()));
+    Serial.println("mqttport: " + String(getMqttPort()));
+    Serial.println("mqttuser: " + String(getMqttUser()));
+    Serial.println("mqttpass: " + String(getMqttPass()));
+    Serial.println("mqtttopic: " + String(getMqttTopic()));
+    Serial.println();
     Serial.println("// RFID Config");
     Serial.println("userfid: " + String(getRfidActive()));
     Serial.println("sspin: " + String(getRfidPin()));
@@ -332,6 +366,22 @@ String ICACHE_FLASH_ATTR EvseWiFiConfig::getConfigJson() {
     }
     meterObject_0["meterphase"] = this->getMeterPhaseCount(0);
     meterObject_0["factor"] = this->getMeterFactor(0);
+
+    JsonObject ocppItem = rootDoc.createNestedObject("ocpp");
+    ocppItem["useocpp"] = this->getOcppActive();
+    ocppItem["ocpphost"] = this->getOcppHost();
+    ocppItem["ocppport"] = this->getOcppPort();
+    ocppItem["ocppurl"] = this->getOcppUrl();
+    ocppItem["ocppboxid"] = this->getOcppBoxId();
+    ocppItem["ocppauthkey"] = this->getOcppAuthKey();
+
+    JsonObject mqttItem = rootDoc.createNestedObject("mqtt");
+    mqttItem["usemqtt"] = this->getMqttActive();
+    mqttItem["mqttserver"] = this->getMqttServer();
+    mqttItem["mqttport"] = this->getMqttPort();
+    mqttItem["mqttuser"] = this->getMqttUser();
+    mqttItem["mqttpass"] = this->getMqttPass();
+    mqttItem["mqtttopic"] = this->getMqttTopic();
 
     JsonObject rfidItem = rootDoc.createNestedObject("rfid");
     rfidItem["userfid"] = this->getRfidActive();
@@ -523,6 +573,66 @@ uint8_t ICACHE_FLASH_ATTR EvseWiFiConfig::getMeterPhaseCount(uint8_t meterId) {
 uint8_t ICACHE_FLASH_ATTR EvseWiFiConfig::getMeterFactor(uint8_t meterId) {
     if (meterConfig[meterId].factor) return meterConfig[meterId].factor;
     return 1;
+}
+
+// ocppConfig getter/setter
+bool ICACHE_FLASH_ATTR EvseWiFiConfig::getOcppActive(){
+    return ocppConfig.useocpp;
+}
+
+const char * ICACHE_FLASH_ATTR EvseWiFiConfig::getOcppHost() {
+    if (ocppConfig.ocpphost) return ocppConfig.ocpphost;
+    return "";
+}
+
+int ICACHE_FLASH_ATTR EvseWiFiConfig::getOcppPort() {
+    if (ocppConfig.ocppport) return ocppConfig.ocppport;
+    return 80;
+}
+
+const char * ICACHE_FLASH_ATTR EvseWiFiConfig::getOcppUrl() {
+    if (ocppConfig.ocppurl) return ocppConfig.ocppurl;
+    return "";
+}
+
+const char * ICACHE_FLASH_ATTR EvseWiFiConfig::getOcppBoxId() {
+    if (ocppConfig.ocppboxid) return ocppConfig.ocppboxid;
+    return "";
+}
+
+const char * ICACHE_FLASH_ATTR EvseWiFiConfig::getOcppAuthKey() {
+    if (ocppConfig.ocppauthkey) return ocppConfig.ocppauthkey;
+    return "";
+}
+
+// mqttConfig getter/setter
+bool ICACHE_FLASH_ATTR EvseWiFiConfig::getMqttActive(){
+    return mqttConfig.usemqtt;
+}
+
+const char * ICACHE_FLASH_ATTR EvseWiFiConfig::getMqttServer() {
+    if (mqttConfig.mqttserver) return mqttConfig.mqttserver;
+    return "";
+}
+
+int ICACHE_FLASH_ATTR EvseWiFiConfig::getMqttPort() {
+    if (mqttConfig.mqttport) return mqttConfig.mqttport;
+    return 1883;
+}
+
+const char * ICACHE_FLASH_ATTR EvseWiFiConfig::getMqttUser() {
+    if (mqttConfig.mqttuser) return mqttConfig.mqttuser;
+    return "";
+}
+
+const char * ICACHE_FLASH_ATTR EvseWiFiConfig::getMqttPass() {
+    if (mqttConfig.mqttpass) return mqttConfig.mqttpass;
+    return "";
+}
+
+const char * ICACHE_FLASH_ATTR EvseWiFiConfig::getMqttTopic() {
+    if (mqttConfig.mqtttopic) return mqttConfig.mqtttopic;
+    return "evse";
 }
 
 // rfidConfig getter/setter

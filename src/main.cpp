@@ -40,6 +40,8 @@
 #include <ArduinoJson.h>              // JSON Library for Encoding and Parsing Json object to send browser
 #include <ESPAsyncWebServer.h>        // Async Web Server with built-in WebSocket Plug-in
 #include <SPIFFSEditor.h>             // This creates a web page on server which can be used to edit text based files
+#include <PubSubClient.h>
+#include <ArduinoOcpp.h>
 
 #include <ModbusMaster.h>
 #include <ModbusIP_ESP8266.h>
@@ -70,6 +72,8 @@ String swVersion = String(sw_maj) + "." + String(sw_min) + "." + String(sw_rev) 
 //EVSE Variables
 uint32_t startChargingTimestamp = 0; 
 uint32_t stopChargingTimestamp = 0;
+uint32_t lastMqttPublish = 0;
+uint32_t lastMqttReconnect = 0;
 bool manualStop = false;
 uint8_t currentToSet = 6;
 uint8_t evseStatus = 0;
@@ -84,6 +88,8 @@ const char * initLog = "{\"type\":\"latestlog\",\"list\":[]}";
 bool sliderStatus = true;
 uint8_t evseErrorCount = 0;
 bool doCpInterruptCp = false;
+WiFiClient espClient;
+PubSubClient client(espClient);
 
 #ifndef ESP8266
 unsigned long millisInterruptCp = 0;
@@ -537,6 +543,364 @@ bool ICACHE_FLASH_ATTR reconnectWiFi() {
   if (config.getSystemDebug())Serial.print(F("[ INFO ] Trying to reconnect WiFi without given BSSID: "));
   if (config.getSystemDebug())Serial.print(config.getWifiSsid());
   return true;
+}
+
+#ifndef ESP8266
+bool ICACHE_FLASH_ATTR interruptCp() {
+  digitalWrite(config.getEvseCpIntPin(0), HIGH);
+  millisInterruptCp = millis() + 3000;
+  doCpInterruptCp = true;
+  Serial.println("Interrupt CP started");
+  return true;
+}
+#endif
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///////       MQTT Functions
+//////////////////////////////////////////////////////////////////////////////////////////
+
+void ICACHE_FLASH_ATTR mqtt_callback(char* topic, byte* message, unsigned int length) {
+  char topic_buff[64];
+  String val_buff;
+
+  for (int i = 0; i < length; i++) {
+    val_buff += (char)message[i];
+  }
+
+  snprintf(topic_buff, 64, "%s/setcurrent", config.getMqttTopic());
+  if (strcmp(topic, topic_buff) == 0) {
+    currentToSet = val_buff.toInt();
+    if (config.getSystemDebug()) Serial.print("[ System ] MQTT Setting current to ");
+    if (config.getSystemDebug()) Serial.println(currentToSet);
+    setEVSEcurrent();
+  }
+
+  snprintf(topic_buff, 64, "%s/setstatus", config.getMqttTopic());
+  if (strcmp(topic, topic_buff) == 0) {
+    if (val_buff == "true" && !evseActive) {
+      if (config.getSystemDebug()) Serial.println("[ System ] MQTT activating EVSE");
+      activateEVSE();
+    } else if (val_buff == "false" && evseActive) {
+      if (config.getSystemDebug()) Serial.println("[ System ] MQTT deactivating EVSE");
+      toDeactivateEVSE = true;
+    }
+  }
+
+  snprintf(topic_buff, 64, "%s/doreboot", config.getMqttTopic());
+  if (strcmp(topic, topic_buff) == 0) {
+    if (val_buff == "true") {
+      if (config.getSystemDebug()) Serial.println("[ System ] MQTT rebooting");
+      toReboot = true;
+    }
+  }
+
+  #ifndef ESP8266
+  snprintf(topic_buff, 64, "%s/interruptcp", config.getMqttTopic());
+  if (strcmp(topic, topic_buff) == 0) {
+    if (val_buff == "true") {
+      if (config.getSystemDebug()) Serial.println("[ System ] MQTT Interrupting CP");
+      interruptCp();
+    }
+  }
+  #endif
+}
+
+void ICACHE_FLASH_ATTR ocppsetup() {
+  OCPP_initialize(config.getOcppHost(), config.getOcppPort(), config.getOcppUrl());
+  bootNotification("kolaCZek's esp8266 Test Rig", "FooBar Company");
+}
+
+void ICACHE_FLASH_ATTR ocpploop() {
+  OCPP_loop();
+}
+
+void ICACHE_FLASH_ATTR mqttsetup() {
+  client.setServer(config.getMqttServer(), config.getMqttPort());
+  client.setCallback(mqtt_callback);
+}
+
+void ICACHE_FLASH_ATTR mqttreconnect() {
+  if (config.getSystemDebug()) Serial.print("[ System ] MQTT connectiong...");
+
+  if (client.connect(config.getSystemHostname(), config.getMqttUser(), config.getMqttPass())) {
+    char topic_buff[64];
+
+    snprintf(topic_buff, 64, "%s/setcurrent", config.getMqttTopic());
+    client.subscribe(topic_buff);
+
+    snprintf(topic_buff, 64, "%s/setstatus", config.getMqttTopic());
+    client.subscribe(topic_buff);
+
+    snprintf(topic_buff, 64, "%s/doreboot", config.getMqttTopic());
+    client.subscribe(topic_buff);
+
+    #ifndef ESP8266
+    snprintf(topic_buff, 64, "%s/interruptcp", config.getMqttTopic());
+    client.subscribe(topic_buff);
+    #endif
+
+    if (config.getSystemDebug()) Serial.println(" connected");
+  } else {
+    if (config.getSystemDebug()) Serial.println(" Failed! Next try in 30s");
+  }
+}
+
+void ICACHE_FLASH_ATTR mqttloop() {
+  if (client.connected()) {
+
+    if (ntp.getUptimeSec() - lastMqttPublish > 5) {
+      char val_buff[32];
+      char topic_buff[64];
+
+      snprintf(topic_buff, 64, "%s/parameters/vehicleState", config.getMqttTopic());
+      snprintf(val_buff, 32, "%i", evseStatus);
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/parameters/evseState", config.getMqttTopic());
+      snprintf(val_buff, 32, "%s", evseActive?"true":"false");
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/parameters/maxCurrent", config.getMqttTopic());
+      snprintf(val_buff, 32, "%i", maxCurrent);
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/parameters/actualCurrent", config.getMqttTopic());
+      snprintf(val_buff, 32, "%i", evseAmpsConfig);
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/parameters/actualCurrent", config.getMqttTopic());
+      snprintf(val_buff, 32, "%i", evseAmpsConfig);
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/parameters/actualPower", config.getMqttTopic());
+      snprintf(val_buff, 32, "%f", float(int((currentKW + 0.005) * 100.0)) / 100.0);
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/parameters/duration", config.getMqttTopic());
+      snprintf(val_buff, 32, "%i", getChargingTime());
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/parameters/alwaysActive", config.getMqttTopic());
+      snprintf(val_buff, 32, "%s", config.getEvseAlwaysActive(0)?"true":"false");
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/parameters/lastActionUser", config.getMqttTopic());
+      snprintf(val_buff, 32, "%s", lastUsername);
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/parameters/lastActionUID", config.getMqttTopic());
+      snprintf(val_buff, 32, "%s", lastUID);
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/parameters/energy", config.getMqttTopic());
+      snprintf(val_buff, 32, "%f", float(int((meteredKWh + 0.005) * 100.0)) / 100.0);
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/parameters/mileage", config.getMqttTopic());
+      snprintf(val_buff, 32, "%f", float(int(((meteredKWh * 100.0 / config.getEvseAvgConsumption(0)) + 0.05) * 10.0)) / 10.0);
+      client.publish(topic_buff, val_buff);
+
+      if (config.useMMeter) {
+        snprintf(topic_buff, 64, "%s/parameters/meterReading", config.getMqttTopic());
+        snprintf(val_buff, 32, "%f", float(int((meterReading + 0.005) * 100.0)) / 100.0);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/parameters/currentP1", config.getMqttTopic());
+        snprintf(val_buff, 32, "%f", currentP1);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/parameters/currentP2", config.getMqttTopic());
+        snprintf(val_buff, 32, "%f", currentP2);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/parameters/currentP3", config.getMqttTopic());
+        snprintf(val_buff, 32, "%f", currentP3);
+        client.publish(topic_buff, val_buff);
+      } else {
+        snprintf(topic_buff, 64, "%s/parameters/meterReading", config.getMqttTopic());
+        snprintf(val_buff, 32, "%f", float(int((startTotal + meteredKWh + 0.005) * 100.0)) / 100.0);
+        client.publish(topic_buff, val_buff);
+
+        if (config.getMeterPhaseCount(0) == 1) {
+          float fCurrent = float(int((currentKW / float(config.getMeterFactor(0)) / 0.227 + 0.005) * 100.0) / 100.0);
+          if (config.getMeterFactor(0) == 1) {
+            snprintf(topic_buff, 64, "%s/parameters/currentP1", config.getMqttTopic());
+            snprintf(val_buff, 32, "%f", fCurrent);
+            client.publish(topic_buff, val_buff);
+
+            snprintf(topic_buff, 64, "%s/parameters/currentP2", config.getMqttTopic());
+            snprintf(val_buff, 32, "%f", 0);
+            client.publish(topic_buff, val_buff);
+
+            snprintf(topic_buff, 64, "%s/parameters/currentP3", config.getMqttTopic());
+            snprintf(val_buff, 32, "%f", 0);
+            client.publish(topic_buff, val_buff);
+          } else if (config.getMeterFactor(0) == 2) {
+            snprintf(topic_buff, 64, "%s/parameters/currentP1", config.getMqttTopic());
+            snprintf(val_buff, 32, "%f", fCurrent);
+            client.publish(topic_buff, val_buff);
+
+            snprintf(topic_buff, 64, "%s/parameters/currentP2", config.getMqttTopic());
+            snprintf(val_buff, 32, "%f", fCurrent);
+            client.publish(topic_buff, val_buff);
+
+            snprintf(topic_buff, 64, "%s/parameters/currentP3", config.getMqttTopic());
+            snprintf(val_buff, 32, "%f", 0);
+            client.publish(topic_buff, val_buff);
+          } else if (config.getMeterFactor(0) == 3) {
+            snprintf(topic_buff, 64, "%s/parameters/currentP1", config.getMqttTopic());
+            snprintf(val_buff, 32, "%f", fCurrent);
+            client.publish(topic_buff, val_buff);
+
+            snprintf(topic_buff, 64, "%s/parameters/currentP2", config.getMqttTopic());
+            snprintf(val_buff, 32, "%f", fCurrent);
+            client.publish(topic_buff, val_buff);
+
+            snprintf(topic_buff, 64, "%s/parameters/currentP3", config.getMqttTopic());
+            snprintf(val_buff, 32, "%f", fCurrent);
+            client.publish(topic_buff, val_buff);
+          }
+        } else {
+          float fCurrent = float(int((currentKW / 0.227 / float(config.getMeterFactor(0)) / 3.0 + 0.005) * 100.0) / 100.0);
+          snprintf(topic_buff, 64, "%s/parameters/currentP1", config.getMqttTopic());
+          snprintf(val_buff, 32, "%f", fCurrent);
+          client.publish(topic_buff, val_buff);
+
+          snprintf(topic_buff, 64, "%s/parameters/currentP2", config.getMqttTopic());
+          snprintf(val_buff, 32, "%f", fCurrent);
+          client.publish(topic_buff, val_buff);
+
+          snprintf(topic_buff, 64, "%s/parameters/currentP3", config.getMqttTopic());
+          snprintf(val_buff, 32, "%f", fCurrent);
+          client.publish(topic_buff, val_buff);
+        }
+      }
+
+      #ifdef ESP8266
+      struct ip_info info;
+      if (inAPMode) {
+        wifi_get_ip_info(SOFTAP_IF, &info);
+        struct softap_config conf;
+        wifi_softap_get_config(&conf);
+
+        snprintf(topic_buff, 64, "%s/host/ssid", config.getMqttTopic());
+        snprintf(val_buff, 32, "%s", conf.ssid);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/dns", config.getMqttTopic());
+        printIP(WiFi.softAPIP()).toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/mac", config.getMqttTopic());
+        WiFi.softAPmacAddress().toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+      } else {
+        wifi_get_ip_info(STATION_IF, &info);
+        struct station_config conf;
+        wifi_station_get_config(&conf);
+
+        snprintf(topic_buff, 64, "%s/host/ssid", config.getMqttTopic());
+        snprintf(val_buff, 32, "%s", conf.ssid);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/rssi", config.getMqttTopic());
+        snprintf(val_buff, 32, "%i", WiFi.RSSI());
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/dns", config.getMqttTopic());
+        printIP(WiFi.dnsIP()).toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/mac", config.getMqttTopic());
+        String(WiFi.macAddress()).toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+      }
+      #else
+      wifi_config_t conf;
+      tcpip_adapter_ip_info_t info;
+      tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_ETH, &info);
+      if (inAPMode) {
+        esp_wifi_get_config(WIFI_IF_AP, &conf);
+
+        snprintf(topic_buff, 64, "%s/host/ssid", config.getMqttTopic());
+        snprintf(val_buff, 32, "%s", conf.ap.ssid);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/dns", config.getMqttTopic());
+        printIP(WiFi.softAPIP()).toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/ip", config.getMqttTopic());
+        WiFi.softAPIP().toString().toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/netmask", config.getMqttTopic());
+        printSubnet(WiFi.softAPSubnetCIDR()).toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/gateway", config.getMqttTopic());
+        WiFi.gatewayIP().toString().toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+      }
+      else {
+        esp_wifi_get_config(WIFI_IF_STA, &conf);
+
+        snprintf(topic_buff, 64, "%s/host/ssid", config.getMqttTopic());
+        snprintf(val_buff, 32, "%s", conf.sta.ssid);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/rssi", config.getMqttTopic());
+        snprintf(val_buff, 32, "%i", WiFi.RSSI());
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/dns", config.getMqttTopic());
+        printIP(WiFi.dnsIP()).toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/mac", config.getMqttTopic());
+        String(WiFi.macAddress()).toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/ip", config.getMqttTopic());
+        WiFi.localIP().toString().toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/netmask", config.getMqttTopic());
+        WiFi.subnetMask().toString().toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+
+        snprintf(topic_buff, 64, "%s/host/gateway", config.getMqttTopic());
+        WiFi.gatewayIP().toString().toCharArray(val_buff, 32);
+        client.publish(topic_buff, val_buff);
+      }
+      #endif
+
+      snprintf(topic_buff, 64, "%s/host/uptime", config.getMqttTopic());
+      snprintf(val_buff, 32, "%i", int(ntp.getUptimeSec()));
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/host/opMode", config.getMqttTopic());
+      if (config.getEvseRemote(0)) {
+        snprintf(val_buff, 32, "%s", "remote");
+      } else {
+        snprintf(val_buff, 32, "%s", config.getEvseAlwaysActive(0)?"alwaysActive":"normal");
+      }
+      client.publish(topic_buff, val_buff);
+
+      snprintf(topic_buff, 64, "%s/host/firmware", config.getMqttTopic());
+      snprintf(val_buff, 32, "%s", swVersion);
+      client.publish(topic_buff, val_buff);
+
+      lastMqttPublish = ntp.getUptimeSec();
+    }
+
+    client.loop();
+  } else if (ntp.getUptimeSec() - lastMqttReconnect > 30) {
+    lastMqttReconnect = ntp.getUptimeSec();
+    mqttreconnect();
+  }
+
+  return;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -1058,7 +1422,7 @@ float ICACHE_FLASH_ATTR getS0MeterReading() {
     else {
       logFile.close();
       for (size_t i = 0; i < list.size(); i++) {
-        JsonObject line = list.getElement(i);
+        JsonObject line = list[i];
         if (line["energy"] != "e") {
           fMeterReading += (float)line["energy"];
         }
@@ -1615,16 +1979,6 @@ void ICACHE_FLASH_ATTR sendUserList(int page, AsyncWebSocketClient * client) {
   }
 }
 
-#ifndef ESP8266
-bool ICACHE_FLASH_ATTR interruptCp() {
-  digitalWrite(config.getEvseCpIntPin(0), HIGH);
-  millisInterruptCp = millis() + 3000;
-  doCpInterruptCp = true;
-  Serial.println("Interrupt CP started");
-  return true;
-}
-#endif
-
 void ICACHE_FLASH_ATTR onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len) {
   if (type == WS_EVT_ERROR) {
     if (config.getSystemDebug()) Serial.printf("[ WARN ] WebSocket[%s][%u] error(%u): %s\r\n", server->url(), client->id(), *((uint16_t*)arg), (char*)data);
@@ -2100,6 +2454,7 @@ bool ICACHE_FLASH_ATTR connectSTA(const char* ssid, const char* password, byte b
 
   if (config.getSystemDebug()) Serial.println();
   if (config.getSystemDebug()) Serial.println(F("[ WARN ] Couldn't connect in time"));
+
   return false;
 }
 
@@ -2578,6 +2933,9 @@ void ICACHE_FLASH_ATTR setWebEvents() {
         item["ssid"] = String(reinterpret_cast<char*>(conf.ap.ssid));
         item["dns"] = printIP(WiFi.softAPIP());
         item["mac"] = WiFi.softAPmacAddress();
+        item["ip"] = WiFi.softAPIP().toString();
+        item["netmask"] = printSubnet(WiFi.softAPSubnetCIDR());
+        item["gateway"] = WiFi.gatewayIP().toString();
       }
       else {
         esp_wifi_get_config(WIFI_IF_STA, &conf);
@@ -2585,17 +2943,22 @@ void ICACHE_FLASH_ATTR setWebEvents() {
         item["rssi"] = String(WiFi.RSSI());
         item["dns"] = printIP(WiFi.dnsIP());
         item["mac"] = WiFi.macAddress();
+        item["ip"] = WiFi.localIP().toString();
+        item["netmask"] = WiFi.subnetMask().toString();
+        item["gateway"] = WiFi.gatewayIP().toString();
       } 
       #endif
-
-      IPAddress ipaddr = IPAddress(info.ip.addr);
-      IPAddress gwaddr = IPAddress(info.gw.addr);
-      IPAddress nmaddr = IPAddress(info.netmask.addr);
-      item["ip"] = printIP(ipaddr);
-      item["gateway"] = printIP(gwaddr);
-      item["netmask"] = printIP(nmaddr);
       item["uptime"] = ntp.getUptimeSec();
-
+      if (config.getEvseRemote(0)) {
+        item["opMode"] = "remote";
+      }
+      else if (config.getEvseAlwaysActive(0)) {
+        item["opMode"] = "alwaysActive";
+      }
+      else {
+        item["opMode"] = "normal";
+      }
+      item["firmware"] = swVersion;
       serializeJson(jsonDoc, *response);
       request->send(response);
     });
@@ -2842,6 +3205,14 @@ void ICACHE_RAM_ATTR setup() {
 
   MDNS.addService("http", "tcp", 80);
   setModbusTCPRegisters();
+
+  if (config.getMqttActive()) {
+    mqttsetup();
+  }
+
+  if (config.getOcppActive()) {
+    ocppsetup();
+  }
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -2986,6 +3357,14 @@ void ICACHE_RAM_ATTR loop() {
 
   if (toSetSmartWb11kwFactorySettings) {
     if (setSmartWb11kWSettings() == false) setSmartWb11kWSettings();
+  }
+
+  if (config.getMqttActive() && !updateRunning) {
+    mqttloop();
+  }
+
+  if (config.getOcppActive() && !updateRunning) {
+    ocpploop();
   }
 
 #ifndef ESP8266

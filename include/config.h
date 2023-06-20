@@ -32,6 +32,24 @@ struct s_meterConfig {
     uint8_t factor;
 };
 
+struct s_ocppConfig {
+    bool useocpp;
+    const char* ocpphost;
+    int ocppport;
+    const char* ocppurl;
+    const char* ocppboxid;
+    const char* ocppauthkey;
+};
+
+struct s_mqttConfig {
+    bool usemqtt;
+    const char* mqttserver;
+    int mqttport;
+    const char* mqttuser;
+    const char* mqttpass;
+    const char* mqtttopic;
+};
+
 struct s_rfidConfig {
     bool userfid;
     bool usePN532;
@@ -113,6 +131,22 @@ public:
     bool mMeterTypeSDM120;
     bool mMeterTypeSDM630;
 
+// ocppConfig
+    bool ICACHE_FLASH_ATTR getOcppActive();
+    const char * ICACHE_FLASH_ATTR getOcppHost();
+    int ICACHE_FLASH_ATTR getOcppPort();
+    const char * ICACHE_FLASH_ATTR getOcppUrl();
+    const char * ICACHE_FLASH_ATTR getOcppBoxId();
+    const char * ICACHE_FLASH_ATTR getOcppAuthKey();
+
+// mqttConfig
+    bool ICACHE_FLASH_ATTR getMqttActive();
+    const char * ICACHE_FLASH_ATTR getMqttServer();
+    int ICACHE_FLASH_ATTR getMqttPort();
+    const char * ICACHE_FLASH_ATTR getMqttUser();
+    const char * ICACHE_FLASH_ATTR getMqttPass();
+    const char * ICACHE_FLASH_ATTR getMqttTopic();
+
 // rfidConfig
     bool ICACHE_FLASH_ATTR getRfidActive();
     uint8_t ICACHE_FLASH_ATTR getRfidPin();
@@ -158,6 +192,8 @@ public:
 private:
     s_wifiConfig wifiConfig;
     s_meterConfig meterConfig[1];
+    s_ocppConfig ocppConfig;
+    s_mqttConfig mqttConfig;
     s_rfidConfig rfidConfig;
     s_ntpConfig ntpConfig;
     s_buttonConfig buttonConfig[1];
