@@ -3112,6 +3112,7 @@ void ICACHE_RAM_ATTR setup() {
 
   SPI.begin();
   SPIFFS.begin();
+  //SPIFFS.format();
   #ifdef ESP8266
   SecondSer.begin(9600);
   meterNode.begin(2, Serial);
